@@ -17,7 +17,8 @@ def get_embedding_model():
 def hybrid_search_fallback(query_text, bm25_results, corpus_chunks, corpus_embeddings=None):
     """
     Fonction de recherche hybride avec stratégie de repli (fallback).
-    Si le BM25 ne renvoie rien, on bascule sur une recherche sémantique dense.
+    Si le BM25 ne renvoie rien, on bascule sur une recherche sémantique dense 
+    et on retourne les résultats au format compatible (index de page).
     """
     # 1. Si le BM25 a trouvé des résultats, on les utilise
     if bm25_results and len(bm25_results) > 0:
@@ -29,7 +30,6 @@ def hybrid_search_fallback(query_text, bm25_results, corpus_chunks, corpus_embed
     model = get_embedding_model()
     query_embedding = model.encode(query_text, convert_to_tensor=True)
     
-    # Si les embeddings du corpus ne sont pas fournis, on les calcule à la volée sur les chunks
     if corpus_embeddings is None and corpus_chunks:
         corpus_embeddings = model.encode(corpus_chunks, convert_to_tensor=True)
     
@@ -39,9 +39,13 @@ def hybrid_search_fallback(query_text, bm25_results, corpus_chunks, corpus_embed
     # Calcul de la similarité cosinus entre la requête et les chunks du corpus
     cos_scores = util.cos_sim(query_embedding, corpus_embeddings)[0]
     
-    # Récupérer les meilleurs indices (par exemple les 3 plus proches)
-    top_k = min(3, len(corpus_chunks))
+    # Récupérer les meilleurs indices (top_k=10 pour correspondre à la demande du pipeline)
+    top_k = min(10, len(corpus_chunks))
     top_results = np.argsort(cos_scores.cpu().numpy())[::-1][:top_k]
     
-    dense_results = [corpus_chunks[idx] for idx in top_results]
+    # Format de sortie compatible avec le pipeline (dictionnaire avec 'doc_id' et 'score')
+    dense_results = [
+        {"doc_id": int(idx), "score": float(cos_scores[idx])} 
+        for idx in top_results
+    ]
     return dense_results
