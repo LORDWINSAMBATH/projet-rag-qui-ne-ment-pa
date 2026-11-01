@@ -12,14 +12,15 @@ def analyze_corpus_types(pdf_dir="corpus/pdf"):
     types_count = Counter()
     total_docs = 0
 
-    print(érification en cours des documents dans '{pdf_dir}'...\n")
+    print(f"🔍 Analyse détaillée des documents dans '{pdf_dir}'...\n")
+    print("--- 📄 DÉTAIL PAR DOCUMENT ---")
 
     for pdf_file in sorted(pdf_path.glob("*.pdf")):
         total_docs += 1
         doc_id = pdf_file.stem
         doc_type = "Autre / Non classé"
         
-        # 1. Analyse basée sur les préfixes du nom de fichier (ex: insee-ip)
+        # 1. Analyse basée sur les préfixes du nom de fichier
         if "insee" in doc_id.lower():
             doc_type = "Publication INSEE (Conjoncture / Flash)"
         
@@ -35,7 +36,21 @@ def analyze_corpus_types(pdf_dir="corpus/pdf"):
                         doc_type = "Document Budgétaire / Financier"
                     elif "synthese" in first_page_text or "synthèse" in first_page_text:
                         doc_type = "Note de Synthèse"
-                    elif "statistique" in first_page_text orrésultats" in first_page_text:
+                    elif "statistique" in first_page_text or "résultats" in first_page_text:
                         doc_type = "Étude / Recueil Statistique"
         except Exception as e:
             print(f"Erreur de lecture sur {doc_id}: {e}")
+
+        types_count[doc_type] += 1
+        print(f"• {doc_id} ➔ {doc_type}")
+
+    # Affichage du résumé global
+    print("\n" + "=" * 60)
+    print(f"📊 RÉSUMÉ GLOBAL DU CORPUS (Total : {total_docs} documents)")
+    print("=" * 60)
+    for dtype, count in types_count.most_common():
+        print(f"• {count} document(s) de type : {dtype}")
+    print("=" * 60)
+
+if __name__ == "__main__":
+    analyze_corpus_types()
