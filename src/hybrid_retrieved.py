@@ -1,9 +1,10 @@
 import json
 import os
+import unicodedata
 from sentence_transformers import SentenceTransformer, util
 import numpy as np
 
-# Chargement d'un modèle d'embedding léger et performant
+# Chargement d'un modèle d'embedding léger, performant et multilingue
 MODEL_NAME = "all-MiniLM-L6-v2"
 _model = None
 
@@ -14,38 +15,51 @@ def get_embedding_model():
         _model = SentenceTransformer(MODEL_NAME)
     return _model
 
-def hybrid_search_fallback(query_text, bm25_results, corpus_chunks, corpus_embeddings=None):
+def normalize_text(text: str) -> str:
+    """Normalise le texte pour uniformiser la recherche."""
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', text)
+        if unicodedata.category(c) != 'Mn'
+    ).lower()
+
+def hybrid_search_robust(query_text, retriever, corpus_chunks, top_k=10, alpha=0.5):
     """
-    Fonction de recherche hybride avec stratégie de repli (fallback).
-    Si le BM25 ne renvoie rien, on bascule sur une recherche sémantique dense 
-    et on retourne les résultats au format compatible (index de page).
+    Moteur de recherche hybride combinant BM25 (mots-clés exacts/tableaux) 
+    et Recherche Dense (sémantique) avec fusion des scores (Alpha blending).
     """
-    # 1. Si le BM25 a trouvé des résultats, on les utilise
-    if bm25_results and len(bm25_results) > 0:
-        return bm25_results
+    # 1. Recherche Lexicale (BM25)
+    bm25_raw_results = retriever.search(query_text, top_k=top_k * 2)
     
-    # 2. Stratégie de repli (Fallback) : Recherche dense par similarité sémantique
-    print(f"[Hybride] BM25 inactif ou vide. Bascule en recherche dense pour : '{query_text}'")
-    
+    # Normalisation des scores BM25 entre 0 et 1
+    bm25_scores = {}
+    if bm25_raw_results:
+        max_bm25 = max([res.get("score", 1.0) for res in bm25_raw_results]) or 1.0
+        for res in bm25_raw_results:
+            doc_idx = res["doc_id"]
+            bm25_scores[doc_idx] = res.get("score", 0.0) / max_bm25
+
+    # 2. Recherche Sémantique Dense (Embeddings)
     model = get_embedding_model()
     query_embedding = model.encode(query_text, convert_to_tensor=True)
     
-    if corpus_embeddings is None and corpus_chunks:
-        corpus_embeddings = model.encode(corpus_chunks, convert_to_tensor=True)
+    corpus_embeddings = model.encode(corpus_chunks, convert_to_tensor=True)
+    cos_scores = util.cos_sim(query_embedding, corpus_embeddings)[0].cpu().numpy()
     
-    if not corpus_chunks or corpus_embeddings is None:
-        return []
+    # Normalisation des scores cosinus entre 0 et 1 (ils le sont déjà globalement via cos_sim, mais on s'assure du format)
+    dense_scores = {idx: float(score) for idx, score in enumerate(cos_scores)}
 
-    # Calcul de la similarité cosinus entre la requête et les chunks du corpus
-    cos_scores = util.cos_sim(query_embedding, corpus_embeddings)[0]
+    # 3. Fusion Hybride des scores (Score final = alpha * BM25 + (1 - alpha) * Sémantique)
+    # alpha = 0.5 donne autant de poids aux mots-clés (tableaux, chiffres) qu'au sens global.
+    all_indices = set(bm25_scores.keys()).union(set(dense_scores.keys()))
+    combined_results = []
+
+    for idx in all_indices:
+        b_score = bm25_scores.get(idx, 0.0)
+        d_score = dense_scores.get(idx, 0.0)
+        final_score = (alpha * b_score) + ((1 - alpha) * d_score)
+        combined_results.append({"doc_id": int(idx), "score": float(final_score)})
+
+    # Tri par score décroissant et sélection des top_k meilleurs
+    combined_results = sorted(combined_results, key=lambda x: x["score"], reverse=True)[:top_k]
     
-    # Récupérer les meilleurs indices (top_k=10 pour correspondre à la demande du pipeline)
-    top_k = min(10, len(corpus_chunks))
-    top_results = np.argsort(cos_scores.cpu().numpy())[::-1][:top_k]
-    
-    # Format de sortie compatible avec le pipeline (dictionnaire avec 'doc_id' et 'score')
-    dense_results = [
-        {"doc_id": int(idx), "score": float(cos_scores[idx])} 
-        for idx in top_results
-    ]
-    return dense_results
+    return combined_results

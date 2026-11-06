@@ -16,7 +16,7 @@ def normalize_text(text: str) -> str:
         if unicodedata.category(c) != 'Mn'
     ).lower()
 
-def analyze_corpus_types(pdf_dir="corpus/pdf"):
+def analyze_corpus_types(pdf_dir="ground-truth-kit/corpus/pdf"):
     pdf_path = Path(pdf_dir)
     if not pdf_path.exists():
         print(f"Le dossier {pdf_dir} est introuvable. Verifie le chemin.")
