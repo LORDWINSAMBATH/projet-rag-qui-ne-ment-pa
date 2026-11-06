@@ -68,3 +68,4 @@ def analyze_corpus_types(pdf_dir="ground-truth-kit/corpus/pdf"):
 
 if __name__ == "__main__":
     analyze_corpus_types()
+    
